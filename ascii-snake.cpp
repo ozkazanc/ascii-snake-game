@@ -3,7 +3,7 @@
 
 #include <iostream>
 #include <list>
-
+#include <string>
 #include <thread>
 #include <chrono>
 #include <Windows.h>
@@ -19,9 +19,12 @@ int nCurrentY = 0;
 enum Direction { NORTH, WEST, SOUTH, EAST };
 
 void InitField();
+void InitSnake();
 void MoveSnake(Direction dir);
 void GrowSnake(Direction dir);
 bool InBounds(int curX, int curY);
+int SpawnFood();
+
 int main()
 {
 	// Create Screen Buffer
@@ -36,24 +39,27 @@ int main()
 	swprintf_s(&screen[(nScreenHeight - 2) * nScreenWidth + nScreenWidth - 19], 19, L"Press 'q' to quit.");
 
 	InitField();
-		
-	//Initialize snake at the middle of the board
-	nCurrentX = field_width / 2;
-	nCurrentY = field_height / 2;
-	int nStartIndex = nCurrentY * field_width + nCurrentX;
-	snake.push_back(nStartIndex);
-	snake.push_back(nStartIndex + 1);
-	snake.push_back(nStartIndex + 2);
-	snake.push_back(nStartIndex + 3);
+	
+	InitSnake();
 
+	//Variables
 	int bKey[5];
 	int score = 0;
 	bool bGameOver = false;
 
+	Direction dir = WEST;
+
+	bool bNewFood = true;
 	int nFoodIndex = 0;
 	int nFoodCount = 0;
-	bool bNewFood = true;
-	Direction dir = WEST;
+	const int nFoodValue = 10;
+
+	bool bTimedFoodActive = false;
+	int nTimedFoodIndex = 0;
+	const int nTimedFoodValue = 100;
+	const int nActiveTime = 10;
+	const int nFoodInterval = 5;
+	double nCountdown = nActiveTime;
 	
 	while (!bGameOver) {
 		//Timing
@@ -74,18 +80,32 @@ int main()
 		else if (bKey[1] && dir != EAST)	dir = WEST;
 		else if (bKey[2] && dir != NORTH)	dir = SOUTH;
 		else if (bKey[3] && dir != SOUTH)	dir = NORTH;
+
+		//Decrement the timed food countdown if there is a timed food
+		if (bTimedFoodActive) {
+			nCountdown -= 0.1;
+			if (nCountdown <= 0) {
+				bTimedFoodActive = false;
+				swprintf_s(&screen[nTimedFoodIndex + 4 * nScreenWidth], 2, L" ");
+			}
+		}
 	
 		//Spawn food
 		if (bNewFood) {
+			nFoodIndex = SpawnFood();
 			nFoodCount++;
-			// do not want to spawn food on the walls
-			int nFoodX = (rand() % (field_width - 2)) + 1;
-			int nFoodY = (rand() % (field_height - 2)) + 1;
-
-			nFoodIndex = nFoodY * field_width + nFoodX;
 			bNewFood = false;
 			
-			//TODO: Spawn a higher valued timed food  in every 5 foods
+			//Spawn a higher valued timed food  in every 5 foods
+			if (nFoodCount % nFoodInterval == 0) {
+				do {
+					nTimedFoodIndex = SpawnFood();
+				} while (nTimedFoodIndex == nFoodIndex);
+				//do not spawn a timed food on top of an existing food
+
+				bTimedFoodActive = true;
+				nCountdown = nActiveTime;
+			}
 		}
 
 		MoveSnake(dir);
@@ -94,13 +114,20 @@ int main()
 		
 		//Snake eats the food
 		if (snake.front() == nFoodIndex) {
-			score += 10;
+			score += nFoodValue;
 			GrowSnake(dir);
 
 			bNewFood = true;
 			swprintf_s(&screen[nFoodIndex + 4 * nScreenWidth], 2, L" ");
 		}
-		
+		//Snake eats the timed food
+		if (bTimedFoodActive && snake.front() == nTimedFoodIndex) {
+			score += nTimedFoodValue;
+			GrowSnake(dir);
+
+			bTimedFoodActive = false;
+			swprintf_s(&screen[nTimedFoodIndex + 4 * nScreenWidth], 2, L" ");
+		}
 		//Does the snake interrsect with itself?
 		for (auto it = snake.begin(); it != snake.end(); it++)
 			if (it != snake.begin() && *it == snake.front())
@@ -128,8 +155,19 @@ int main()
 		//Drwa the snake length
 		swprintf_s(&screen[2 * nScreenWidth + 20], 23, L"Snake Length: %8d", snake.size());
 
-		WriteConsoleOutputCharacter(hConsole, screen, nScreenWidth * nScreenHeight, { 0, 0 }, &dwBytesWritten);
-	
+		//Draw the timer for the timed food
+		if (bTimedFoodActive) {
+			
+			wsprintf(&screen[2 * nScreenWidth + 45], L"Timer: %2d.%d",(int)nCountdown,(unsigned int)(fmod(nCountdown,1)*10));
+
+			screen[nTimedFoodIndex + 4 * nScreenWidth] = L'%';
+
+		}
+		else {
+			wsprintf(&screen[2 * nScreenWidth + 45], L"               ");
+		}
+
+		WriteConsoleOutputCharacter(hConsole, screen, nScreenWidth * nScreenHeight, { 0, 0 }, &dwBytesWritten);	
 	}
 	CloseHandle(hConsole);
 	std::cout << "Game Over, Score:" << score << std::endl;
@@ -142,6 +180,28 @@ void InitField() {
 		for (int j = 0; j < field_width; j++)
 			field[i * field_width + j] = (j == 0 || j == field_width - 1 || i == 0 || i == field_height - 1) ? L'#' : L' ';
 	}
+}
+void InitSnake() {
+	//Initialize snake at the middle of the board
+	nCurrentX = field_width / 2;
+	nCurrentY = field_height / 2;
+	int nStartIndex = nCurrentY * field_width + nCurrentX;
+	snake.push_back(nStartIndex);
+	snake.push_back(nStartIndex + 1);
+	snake.push_back(nStartIndex + 2);
+	snake.push_back(nStartIndex + 3);
+}
+int SpawnFood() {
+	int index = 0;
+	do {
+		//do not want to spawn food on the walls
+		int nFoodX = (rand() % (field_width - 2)) + 1;
+		int nFoodY = (rand() % (field_height - 2)) + 1;
+		index = nFoodY * field_width + nFoodX;
+
+	} while (std::find(snake.begin(), snake.end(), index) != snake.end()); //do not spawn the food on top of snake's body
+
+	return index;
 }
 void MoveSnake(Direction dir) {
 	int nNextIndex = snake.front();
